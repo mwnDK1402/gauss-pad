@@ -7,6 +7,7 @@
 
 import { Fraction } from "./fraction.js";
 import { addRowMultiple, scaleRow, swapRows } from "./matrix.js";
+import { parseMatrixText } from "./parse.js";
 import { classify } from "./status.js";
 
 function matrix(rows) {
@@ -199,6 +200,20 @@ export function runSelfTest(root) {
       ),
       "inProgress",
     );
+  });
+
+  check("parseMatrixText parses pipe-delimited text", () => {
+    deepEqual(parseMatrixText("1 2 | 3\n4 5 | 6"), {
+      size: 2,
+      rows: [
+        ["1", "2", "3"],
+        ["4", "5", "6"],
+      ],
+    });
+  });
+
+  check("parseMatrixText rejects ragged text", () => {
+    throws(() => parseMatrixText("1 2 3\n4 5"));
   });
 
   const passed = results.filter((result) => result.ok).length;
