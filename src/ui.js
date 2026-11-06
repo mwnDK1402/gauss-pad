@@ -1,5 +1,6 @@
 import { Fraction, ONE } from "./fraction.js";
 import { addRowMultiple, scaleRow, swapRows } from "./matrix.js";
+import { parseMatrixText } from "./parse.js";
 import { classify } from "./status.js";
 
 const VARIABLES = ["x", "y", "z", "w", "u", "v"];
@@ -65,6 +66,9 @@ function initialState() {
     history: [],
     past: [],
     cellErrors: {},
+    pasteOpen: false,
+    pasteText: "",
+    pasteError: null,
     selection: [],
     scaleFactor: "",
     addFactors: { first: "", second: "" },
@@ -324,6 +328,10 @@ export function mountApp(root) {
     state.matrix = parsed;
     state.history = [];
     state.past = [];
+    state.cellErrors = {};
+    state.pasteOpen = false;
+    state.pasteText = "";
+    state.pasteError = null;
     state.selection = [];
     state.operationError = null;
     state.scaleFactor = "";
@@ -340,6 +348,9 @@ export function mountApp(root) {
     state.inputValues = blankValues(size);
     state.lockedValues = null;
     state.cellErrors = {};
+    state.pasteOpen = false;
+    state.pasteText = "";
+    state.pasteError = null;
     state.selection = [];
     resetOperationInputs();
     render({ focusKey: "#matrix-size" });
@@ -361,6 +372,50 @@ export function mountApp(root) {
     if (cell) cell.classList.remove("cell-invalid");
     const error = cell?.querySelector(".cell-error");
     if (error) error.textContent = "";
+  }
+
+  function openPaste() {
+    if (state.mode !== "input") return;
+    state.pasteOpen = true;
+    state.pasteError = null;
+    render({ focusKey: "#paste-input" });
+  }
+
+  function cancelPaste() {
+    state.pasteOpen = false;
+    state.pasteText = "";
+    state.pasteError = null;
+    render({ focusKey: "#paste-button" });
+  }
+
+  function setPasteText(value) {
+    state.pasteText = value;
+    if (!state.pasteError) return;
+
+    state.pasteError = null;
+    const error = document.getElementById("paste-error");
+    if (error) error.textContent = "";
+  }
+
+  function applyPaste() {
+    let parsed;
+    try {
+      parsed = parseMatrixText(state.pasteText);
+    } catch (error) {
+      state.pasteError =
+        error instanceof Error ? error.message : String(error);
+      render({ focusKey: "#paste-input" });
+      return;
+    }
+
+    state.size = parsed.size;
+    state.inputValues = parsed.rows;
+    state.lockedValues = null;
+    state.cellErrors = {};
+    state.pasteOpen = false;
+    state.pasteText = "";
+    state.pasteError = null;
+    render({ focusKey: "#start-button" });
   }
 
   function undo() {
@@ -386,6 +441,9 @@ export function mountApp(root) {
     state.history = [];
     state.past = [];
     state.cellErrors = {};
+    state.pasteOpen = false;
+    state.pasteText = "";
+    state.pasteError = null;
     state.selection = [];
     resetOperationInputs();
     render({ focusKey });
@@ -530,6 +588,10 @@ export function mountApp(root) {
     start,
     changeSize,
     updateCell,
+    openPaste,
+    cancelPaste,
+    setPasteText,
+    applyPaste,
     undo,
     reset,
     selectRow,
@@ -618,6 +680,9 @@ function renderMatrixPanel(state, actions) {
       { class: "matrix-scroll" },
       working ? renderWorkingMatrix(state, actions) : renderInputMatrix(state, actions),
     ),
+    !working && state.pasteOpen
+      ? renderPastePanel(state, actions)
+      : null,
     node("p", {
       class: "matrix-note",
       text: working
@@ -653,12 +718,77 @@ function renderInputActions(state, actions) {
       sizeSelect,
     ),
     node("button", {
+      id: "paste-button",
+      class: "button button--secondary",
+      type: "button",
+      text: "Paste",
+      "aria-expanded": state.pasteOpen ? "true" : "false",
+      "aria-controls": "paste-panel",
+      onclick: actions.openPaste,
+    }),
+    node("button", {
       id: "start-button",
       class: "button button--primary",
       type: "button",
       text: "Start",
       onclick: actions.start,
     }),
+  );
+}
+
+function renderPastePanel(state, actions) {
+  const textarea = node("textarea", {
+    id: "paste-input",
+    class: "paste-input",
+    rows: "5",
+    spellcheck: "false",
+    autocomplete: "off",
+    placeholder: "3 0 0 60\n1 2 0 30\n0 1 -2 3",
+    "aria-label": "Matrix text to paste",
+    "aria-describedby": "paste-error",
+  });
+  textarea.value = state.pasteText;
+  textarea.addEventListener("input", () =>
+    actions.setPasteText(textarea.value),
+  );
+
+  return node(
+    "div",
+    { class: "paste-panel", id: "paste-panel" },
+    node("label", {
+      class: "paste-label",
+      for: "paste-input",
+      text: "Paste matrix",
+    }),
+    textarea,
+    node("p", {
+      class: "paste-hint",
+      text: "Whitespace, commas, or tabs separate cells. Use | before the constant column. Newlines or semicolons separate rows.",
+    }),
+    node("p", {
+      class: "paste-error",
+      id: "paste-error",
+      role: "alert",
+      text: state.pasteError ?? "",
+    }),
+    node(
+      "div",
+      { class: "paste-actions" },
+      node("button", {
+        id: "paste-apply",
+        class: "button button--primary",
+        type: "button",
+        text: "Apply",
+        onclick: actions.applyPaste,
+      }),
+      node("button", {
+        id: "paste-cancel",
+        class: "button button--secondary",
+        type: "button",
+        text: "Cancel",
+        onclick: actions.cancelPaste,
+      }),
+    ),
   );
 }
 
