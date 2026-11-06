@@ -1,0 +1,14 @@
+{
+  "name": "gauss-pad",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A manual Gaussian-elimination workbench",
+  "scripts": {
+    "test": "node --test",
+    "build": "node build.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
