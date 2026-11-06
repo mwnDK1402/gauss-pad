@@ -106,6 +106,9 @@ entries from the most recent Start.
   solution. The coefficient part cannot become the identity matrix.
 - **In progress**: the coefficient part is not yet the identity matrix.
 
+When the coefficient part is the identity matrix, the augmented matrix is in
+reduced row echelon form.
+
 The inconsistent classification is based on the current row form, as displayed.
 Gauss Pad does not reduce the matrix behind the scenes to expose a contradiction
 for you.

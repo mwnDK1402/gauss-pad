@@ -894,7 +894,7 @@ function renderLegendPanel() {
     ),
     node("p", {
       class: "terminology",
-      text: "The coefficient part is the square block left of the separator; the final column holds the constants. A pivot is a leading nonzero entry used during elimination.",
+      text: "The coefficient part is the square block left of the separator; the final column holds the constants. A pivot is a leading nonzero entry used during elimination. An identity coefficient part is the reduced row echelon form of the augmented matrix.",
     }),
   );
 }
