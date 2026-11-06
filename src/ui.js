@@ -128,16 +128,6 @@ function formatAddMultiple(target, source, factor) {
   return `${targetLabel} <- ${targetLabel} + ${factor.toString()}*${sourceLabel}`;
 }
 
-function isTypingTarget(target) {
-  return (
-    target instanceof HTMLElement &&
-    (target.tagName === "INPUT" ||
-      target.tagName === "TEXTAREA" ||
-      target.tagName === "SELECT" ||
-      target.isContentEditable)
-  );
-}
-
 export function mountApp(root) {
   if (!(root instanceof Element)) {
     throw new TypeError("mountApp requires a root element.");
@@ -519,8 +509,8 @@ export function mountApp(root) {
       return;
     }
 
-    if (isTypingTarget(event.target)) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
+
     if (event.key === "u" || event.key === "U") {
       event.preventDefault();
       undo();
