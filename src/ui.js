@@ -7,6 +7,8 @@ const MIN_SIZE = 2;
 const MAX_SIZE = 6;
 const DEFAULT_SIZE = 3;
 const NEGATIVE_ONE = new Fraction(-1n);
+const QUICK_FACTORS = ["-1", "1", "1/2", "1/3", "1/4", "2", "3", "-2"];
+const FLASH_DURATION = 320;
 
 function node(tagName, properties = {}, ...children) {
   const element = document.createElement(tagName);
@@ -53,19 +55,6 @@ function variableLabels(size) {
   return VARIABLES.slice(0, size);
 }
 
-function defaultOperationInputs(size) {
-  const second = size > 1 ? 1 : 0;
-  return {
-    swap: { i: 0, j: second },
-    scale: { i: 0, factor: "" },
-    add: { target: 0, source: second, factor: "" },
-  };
-}
-
-function emptyOperationErrors() {
-  return { swap: "", scale: "", add: "" };
-}
-
 function initialState() {
   return {
     mode: "input",
@@ -76,8 +65,10 @@ function initialState() {
     history: [],
     past: [],
     cellErrors: {},
-    operationErrors: emptyOperationErrors(),
-    operationInputs: defaultOperationInputs(DEFAULT_SIZE),
+    selection: [],
+    scaleFactor: "",
+    addFactors: { first: "", second: "" },
+    operationError: null,
   };
 }
 
@@ -137,6 +128,16 @@ function formatAddMultiple(target, source, factor) {
   return `${targetLabel} <- ${targetLabel} + ${factor.toString()}*${sourceLabel}`;
 }
 
+function isTypingTarget(target) {
+  return (
+    target instanceof HTMLElement &&
+    (target.tagName === "INPUT" ||
+      target.tagName === "TEXTAREA" ||
+      target.tagName === "SELECT" ||
+      target.isContentEditable)
+  );
+}
+
 export function mountApp(root) {
   if (!(root instanceof Element)) {
     throw new TypeError("mountApp requires a root element.");
@@ -144,7 +145,46 @@ export function mountApp(root) {
 
   const state = initialState();
 
-  function render() {
+  function captureFocusKey() {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement) || !root.contains(active)) return null;
+    return active.dataset.focusKey ?? (active.id ? `#${active.id}` : null);
+  }
+
+  function focusByKey(key) {
+    if (!key) return;
+
+    const element = key.startsWith("#")
+      ? document.getElementById(key.slice(1))
+      : root.querySelector(`[data-focus-key="${key}"]`);
+
+    if (element instanceof HTMLElement) {
+      element.focus({ preventScroll: true });
+    }
+  }
+
+  function flashRows(indices) {
+    const elements = [...new Set(indices)]
+      .map((index) => root.querySelector(`tr[data-row="${index}"]`))
+      .filter((element) => element instanceof HTMLElement);
+
+    elements.forEach((element) => element.classList.add("matrix-row--flash"));
+
+    window.setTimeout(() => {
+      elements.forEach((element) =>
+        element.classList.remove("matrix-row--flash"),
+      );
+    }, FLASH_DURATION);
+  }
+
+  function render(options = {}) {
+    const {
+      focusKey,
+      restoreFocus = true,
+      flashRows: rowsToFlash = [],
+    } = options;
+    const activeKey = restoreFocus ? captureFocusKey() : null;
+
     const app = node(
       "div",
       { class: "app-shell" },
@@ -153,13 +193,11 @@ export function mountApp(root) {
         "main",
         { class: "workspace" },
         renderMatrixPanel(state, actions),
+        renderOperationBar(state, actions),
         node(
           "aside",
           { class: "sidebar" },
           renderStatusPanel(state),
-          state.mode === "working"
-            ? renderOperationsPanel(state, actions)
-            : renderInputNotePanel(),
           renderHistoryPanel(state),
           renderLegendPanel(),
         ),
@@ -167,7 +205,7 @@ export function mountApp(root) {
       node(
         "footer",
         { class: "app-footer" },
-        "Exact rational arithmetic. Every row operation is applied only when you submit it.",
+        "Exact rational arithmetic. Every committed operation is applied only when you submit it.",
       ),
     );
 
@@ -177,6 +215,91 @@ export function mountApp(root) {
     if (historyList) {
       historyList.scrollTop = historyList.scrollHeight;
     }
+
+    const targetFocus = focusKey !== undefined ? focusKey : activeKey;
+    if (targetFocus) focusByKey(targetFocus);
+    if (rowsToFlash.length > 0) flashRows(rowsToFlash);
+  }
+
+  function resetOperationInputs() {
+    state.scaleFactor = "";
+    state.addFactors = { first: "", second: "" };
+    state.operationError = null;
+  }
+
+  function clearOperationError(kind) {
+    if (state.operationError?.kind !== kind) return;
+    state.operationError = null;
+    const error = document.getElementById(`operation-error-${kind}`);
+    if (error) error.textContent = "";
+  }
+
+  function selectRow(index) {
+    if (state.mode !== "working") return;
+
+    const existing = state.selection.indexOf(index);
+    if (existing !== -1) {
+      state.selection.splice(existing, 1);
+    } else if (state.selection.length < 2) {
+      state.selection.push(index);
+    } else {
+      state.selection[1] = index;
+    }
+
+    resetOperationInputs();
+
+    if (state.selection.length === 1) {
+      render({ focusKey: "#scale-factor" });
+    } else if (state.selection.length === 2) {
+      render({ focusKey: "#add-factor-second" });
+    } else {
+      render({ focusKey: `row-select-${index}` });
+    }
+  }
+
+  function moveRow(index, direction) {
+    const target = index + direction;
+    if (target < 0 || target >= state.size) return;
+
+    const next = swapRows(state.matrix, index, target);
+    const nextSelection = state.selection.map((selected) =>
+      selected === index ? target : selected === target ? index : selected,
+    );
+    const focusKey =
+      direction < 0
+        ? target > 0
+          ? `row-up-${target}`
+          : `row-down-${target}`
+        : target < state.size - 1
+          ? `row-down-${target}`
+          : `row-up-${target}`;
+
+    state.addFactors = { first: "", second: "" };
+    commitOperation(next, formatSwap(index, target), {
+      affectedRows: [index, target],
+      selection: nextSelection,
+      focusKey,
+    });
+  }
+
+  function moveSelected(direction) {
+    if (state.selection.length !== 1) return;
+
+    const index = state.selection[0];
+    const target = index + direction;
+    if (target < 0 || target >= state.size) return;
+
+    const next = swapRows(state.matrix, index, target);
+    state.addFactors = { first: "", second: "" };
+    commitOperation(next, formatSwap(index, target), {
+      affectedRows: [index, target],
+      selection: [target],
+      focusKey: `row-select-${target}`,
+    });
+  }
+
+  function moveSelectedByKeyboard(direction) {
+    moveSelected(direction);
   }
 
   function start() {
@@ -198,7 +321,7 @@ export function mountApp(root) {
     state.cellErrors = cellErrors;
 
     if (Object.keys(cellErrors).length > 0) {
-      render();
+      render({ restoreFocus: false });
       const firstInvalid = root.querySelector(
         ".matrix-input[aria-invalid='true']",
       );
@@ -211,9 +334,11 @@ export function mountApp(root) {
     state.matrix = parsed;
     state.history = [];
     state.past = [];
-    state.operationErrors = emptyOperationErrors();
-    state.operationInputs = defaultOperationInputs(state.size);
-    render();
+    state.selection = [];
+    state.operationError = null;
+    state.scaleFactor = "";
+    state.addFactors = { first: "", second: "" };
+    render({ focusKey: "row-select-0" });
   }
 
   function changeSize(value) {
@@ -225,8 +350,9 @@ export function mountApp(root) {
     state.inputValues = blankValues(size);
     state.lockedValues = null;
     state.cellErrors = {};
-    state.operationInputs = defaultOperationInputs(size);
-    render();
+    state.selection = [];
+    resetOperationInputs();
+    render({ focusKey: "#matrix-size" });
   }
 
   function updateCell(row, column, value) {
@@ -249,13 +375,18 @@ export function mountApp(root) {
 
   function undo() {
     if (state.past.length === 0) return;
-    state.matrix = state.past.pop();
+
+    const focusKey = captureFocusKey();
+    const previous = state.past.pop();
+    state.matrix = previous.matrix;
+    state.selection = [...previous.selection];
     state.history.pop();
-    state.operationErrors = emptyOperationErrors();
-    render();
+    resetOperationInputs();
+    render({ focusKey });
   }
 
   function reset() {
+    const focusKey = "#matrix-size";
     state.mode = "input";
     state.inputValues = state.lockedValues
       ? cloneValues(state.lockedValues)
@@ -265,66 +396,144 @@ export function mountApp(root) {
     state.history = [];
     state.past = [];
     state.cellErrors = {};
-    state.operationErrors = emptyOperationErrors();
-    state.operationInputs = defaultOperationInputs(state.size);
-    render();
+    state.selection = [];
+    resetOperationInputs();
+    render({ focusKey });
   }
 
-  function commitOperation(nextMatrix, label) {
-    state.past.push(state.matrix);
+  function commitOperation(nextMatrix, label, options = {}) {
+    const {
+      affectedRows = [],
+      selection,
+      focusKey = captureFocusKey(),
+    } = options;
+
+    state.past.push({
+      matrix: state.matrix,
+      selection: [...state.selection],
+    });
     state.history.push(label);
     state.matrix = nextMatrix;
-    state.operationErrors = emptyOperationErrors();
-    render();
-  }
-
-  function applySwap() {
-    const { i, j } = state.operationInputs.swap;
-    const next = swapRows(state.matrix, i, j);
-    commitOperation(next, formatSwap(i, j));
+    if (selection) state.selection = selection;
+    state.operationError = null;
+    render({ focusKey, flashRows: affectedRows });
   }
 
   function applyScale() {
+    if (state.selection.length !== 1) return;
+
+    const index = state.selection[0];
     let factor;
     try {
-      factor = parseOperationFactor(state.operationInputs.scale.factor, {
-        nonzero: true,
-      });
+      factor = parseOperationFactor(state.scaleFactor, { nonzero: true });
     } catch (error) {
-      state.operationErrors.scale = error.message;
-      render();
-      document.getElementById("scale-factor")?.focus();
+      state.operationError = { kind: "scale", message: error.message };
+      render({ focusKey: "#scale-factor" });
       return;
     }
 
-    const { i } = state.operationInputs.scale;
-    const next = scaleRow(state.matrix, i, factor);
-    commitOperation(next, formatScale(i, factor));
+    const next = scaleRow(state.matrix, index, factor);
+    commitOperation(next, formatScale(index, factor), {
+      affectedRows: [index],
+    });
   }
 
-  function applyAddMultiple() {
-    const { target, source } = state.operationInputs.add;
+  function applyAddMultiple(kind) {
+    if (state.selection.length !== 2) return;
 
-    if (target === source) {
-      state.operationErrors.add =
-        "Choose different target and source rows.";
-      render();
-      document.getElementById("add-source-row")?.focus();
-      return;
-    }
+    const [first, second] = state.selection;
+    const target = kind === "first" ? first : second;
+    const source = kind === "first" ? second : first;
 
     let factor;
     try {
-      factor = parseOperationFactor(state.operationInputs.add.factor);
+      factor = parseOperationFactor(state.addFactors[kind]);
     } catch (error) {
-      state.operationErrors.add = error.message;
-      render();
-      document.getElementById("add-factor")?.focus();
+      state.operationError = {
+        kind: `add-${kind}`,
+        message: error.message,
+      };
+      render({ focusKey: `#add-factor-${kind}` });
       return;
     }
 
     const next = addRowMultiple(state.matrix, target, source, factor);
-    commitOperation(next, formatAddMultiple(target, source, factor));
+    commitOperation(next, formatAddMultiple(target, source, factor), {
+      affectedRows: [target],
+    });
+  }
+
+  function applySwap() {
+    if (state.selection.length !== 2) return;
+
+    const [i, j] = state.selection;
+    const next = swapRows(state.matrix, i, j);
+    const nextSelection = state.selection.map((selected) =>
+      selected === i ? j : selected === j ? i : selected,
+    );
+
+    state.addFactors = { first: "", second: "" };
+    commitOperation(next, formatSwap(i, j), {
+      affectedRows: [i, j],
+      selection: nextSelection,
+    });
+  }
+
+  function setScaleFactor(value) {
+    state.scaleFactor = value;
+    clearOperationError("scale");
+  }
+
+  function setAddFactor(kind, value) {
+    state.addFactors[kind] = value;
+    clearOperationError(`add-${kind}`);
+  }
+
+  function setQuickFactor(value) {
+    state.scaleFactor = value;
+    const input = document.getElementById("scale-factor");
+    if (input instanceof HTMLInputElement) {
+      input.value = value;
+      input.focus({ preventScroll: true });
+    }
+    clearOperationError("scale");
+  }
+
+  function handleKeyDown(event) {
+    if (state.mode !== "working") return;
+
+    if (event.key === "Escape") {
+      if (document.activeElement instanceof HTMLInputElement) {
+        document.activeElement.blur();
+        event.preventDefault();
+        return;
+      }
+
+      if (state.selection.length > 0) {
+        const focusKey = captureFocusKey();
+        state.selection = [];
+        resetOperationInputs();
+        render({ focusKey });
+        event.preventDefault();
+      }
+      return;
+    }
+
+    if (isTypingTarget(event.target)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === "u" || event.key === "U") {
+      event.preventDefault();
+      undo();
+      return;
+    }
+
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      state.selection.length === 1
+    ) {
+      event.preventDefault();
+      moveSelectedByKeyboard(event.key === "ArrowUp" ? -1 : 1);
+    }
   }
 
   const actions = {
@@ -333,11 +542,17 @@ export function mountApp(root) {
     updateCell,
     undo,
     reset,
-    applySwap,
+    selectRow,
+    moveRow,
     applyScale,
     applyAddMultiple,
+    applySwap,
+    setScaleFactor,
+    setAddFactor,
+    setQuickFactor,
   };
 
+  document.addEventListener("keydown", handleKeyDown);
   render();
 }
 
@@ -372,6 +587,7 @@ function renderMatrixPanel(state, actions) {
           text: `n = ${state.size}`,
         }),
         node("button", {
+          id: "undo-button",
           class: "button button--secondary",
           type: "button",
           text: "Undo",
@@ -379,6 +595,7 @@ function renderMatrixPanel(state, actions) {
           onclick: actions.undo,
         }),
         node("button", {
+          id: "reset-button",
           class: "button button--secondary",
           type: "button",
           text: "Reset",
@@ -400,7 +617,7 @@ function renderMatrixPanel(state, actions) {
         node("p", {
           class: "panel-subtitle",
           text: working
-            ? "Read-only. The matrix changes only through the operations you submit."
+            ? "Read-only. Click a row header to select it; operations apply to the whole row, including the constant column."
             : "The final column holds the constants.",
         }),
       ),
@@ -409,14 +626,12 @@ function renderMatrixPanel(state, actions) {
     node(
       "div",
       { class: "matrix-scroll" },
-      working
-        ? renderWorkingMatrix(state)
-        : renderInputMatrix(state, actions),
+      working ? renderWorkingMatrix(state, actions) : renderInputMatrix(state, actions),
     ),
     node("p", {
       class: "matrix-note",
       text: working
-        ? "Every operation applies to the whole row, including the constant column."
+        ? "Selection order defines the direction of two-row operations."
         : "Entries accept integers and exact fractions: 3, -2, 1/2, -3/4. Decimals are rejected.",
     }),
   );
@@ -448,6 +663,7 @@ function renderInputActions(state, actions) {
       sizeSelect,
     ),
     node("button", {
+      id: "start-button",
       class: "button button--primary",
       type: "button",
       text: "Start",
@@ -515,7 +731,7 @@ function renderInputMatrix(state, actions) {
 
     return node(
       "tr",
-      {},
+      { class: "matrix-row" },
       node("th", {
         class: "row-heading",
         scope: "row",
@@ -534,7 +750,7 @@ function renderInputMatrix(state, actions) {
   );
 }
 
-function renderWorkingMatrix(state) {
+function renderWorkingMatrix(state, actions) {
   const labels = variableLabels(state.size);
   const headerCells = [
     node("th", { class: "corner", scope: "col" }),
@@ -549,6 +765,7 @@ function renderWorkingMatrix(state) {
   ];
 
   const bodyRows = state.matrix.map((row, rowIndex) => {
+    const selected = state.selection.includes(rowIndex);
     const cells = row.map((entry, columnIndex) =>
       node(
         "td",
@@ -562,14 +779,56 @@ function renderWorkingMatrix(state) {
       ),
     );
 
+    const rowHeader = node(
+      "th",
+      {
+        class: "row-heading row-heading--interactive",
+        scope: "row",
+      },
+      node(
+        "div",
+        { class: "row-heading-stack" },
+        node("button", {
+          class: `row-select${selected ? " row-select--selected" : ""}`,
+          type: "button",
+          "aria-pressed": selected ? "true" : "false",
+          "aria-label": `Select row ${rowIndex + 1}`,
+          "data-focus-key": `row-select-${rowIndex}`,
+          text: `R${rowIndex + 1}`,
+          onclick: () => actions.selectRow(rowIndex),
+        }),
+        node(
+          "div",
+          { class: "row-move-buttons" },
+          node("button", {
+            class: "row-move-button",
+            type: "button",
+            text: "↑",
+            "aria-label": `Move row ${rowIndex + 1} up`,
+            "data-focus-key": `row-up-${rowIndex}`,
+            disabled: rowIndex === 0,
+            onclick: () => actions.moveRow(rowIndex, -1),
+          }),
+          node("button", {
+            class: "row-move-button",
+            type: "button",
+            text: "↓",
+            "aria-label": `Move row ${rowIndex + 1} down`,
+            "data-focus-key": `row-down-${rowIndex}`,
+            disabled: rowIndex === state.size - 1,
+            onclick: () => actions.moveRow(rowIndex, 1),
+          }),
+        ),
+      ),
+    );
+
     return node(
       "tr",
-      {},
-      node("th", {
-        class: "row-heading",
-        scope: "row",
-        text: `R${rowIndex + 1}`,
-      }),
+      {
+        class: `matrix-row${selected ? " matrix-row--selected" : ""}`,
+        "data-row": String(rowIndex),
+      },
+      rowHeader,
       ...cells,
     );
   });
@@ -660,185 +919,238 @@ function renderStatusPanel(state) {
   );
 }
 
-function renderOperationsPanel(state, actions) {
-  const size = state.size;
-
-  return node(
-    "section",
-    { class: "panel operations-panel" },
-    node("h2", { text: "Elementary row operations" }),
-    node("p", {
-      class: "panel-subtitle",
-      text: "Apply one operation at a time. The app performs exactly the operation you submit.",
-    }),
-    node(
-      "div",
-      { class: "operation-list" },
-      renderSwapOperation(state, actions, size),
-      renderScaleOperation(state, actions, size),
-      renderAddOperation(state, actions, size),
-    ),
-  );
-}
-
-function rowSelect(id, value, size, onChange) {
-  const select = node("select", { id });
-  for (let index = 0; index < size; index += 1) {
-    select.append(
-      node("option", { value: String(index), text: `R${index + 1}` }),
+function renderOperationBar(state, actions) {
+  if (state.mode === "input") {
+    return node(
+      "section",
+      {
+        class: "panel operation-bar operation-bar--input",
+        "aria-live": "polite",
+      },
+      node("p", {
+        class: "operation-hint",
+        text: "Enter the augmented matrix, then press Start to enable row selection.",
+      }),
     );
   }
-  select.value = String(value);
-  select.addEventListener("change", () => onChange(Number(select.value)));
-  return select;
+
+  if (state.selection.length === 0) {
+    return node(
+      "section",
+      { class: "panel operation-bar", "aria-live": "polite" },
+      node("p", {
+        class: "operation-hint",
+        text: "Click a row to begin. Click a second row to combine rows.",
+      }),
+    );
+  }
+
+  if (state.selection.length === 1) {
+    return renderScaleBar(state, actions);
+  }
+
+  return renderTwoRowBar(state, actions);
 }
 
-function factorInput(id, value, placeholder, onInput) {
-  const input = node("input", {
-    id,
+function renderScaleBar(state, actions) {
+  const index = state.selection[0];
+  const rowLabel = `R${index + 1}`;
+  const error =
+    state.operationError?.kind === "scale"
+      ? state.operationError.message
+      : "";
+
+  const factor = node("input", {
+    id: "scale-factor",
+    class: "factor-input",
     type: "text",
     inputmode: "text",
     autocomplete: "off",
     spellcheck: "false",
-    value,
-    placeholder,
+    value: state.scaleFactor,
+    placeholder: "factor",
+    "aria-label": `Scale factor for row ${index + 1}`,
   });
-  input.addEventListener("input", () => onInput(input.value));
-  return input;
-}
-
-function field(labelText, control) {
-  return node(
-    "div",
-    { class: "field" },
-    node("label", { for: control.id, text: labelText }),
-    control,
+  factor.addEventListener("input", () =>
+    actions.setScaleFactor(factor.value),
   );
-}
 
-function operationForm({
-  title,
-  description,
-  fields,
-  buttonLabel,
-  error,
-  onSubmit,
-}) {
+  const quickButtons = QUICK_FACTORS.map((value) =>
+    node("button", {
+      class: "quick-factor",
+      type: "button",
+      text: value,
+      "aria-label": `Use factor ${value}`,
+      onclick: () => actions.setQuickFactor(value),
+    }),
+  );
+
   const form = node(
     "form",
-    { class: "operation-card", novalidate: true },
-    node("h3", { text: title }),
-    node("p", { class: "operation-description", text: description }),
-    node("div", { class: "operation-fields" }, ...fields),
-    node("p", { class: "op-error", role: "alert", text: error }),
+    { class: "scale-form", novalidate: true },
+    node(
+      "label",
+      { class: "operation-label", for: "scale-factor" },
+      "Scale ",
+      node("strong", { text: rowLabel }),
+      " by",
+    ),
+    factor,
+    node(
+      "div",
+      {
+        class: "quick-factors",
+        role: "group",
+        "aria-label": "Quick factors",
+      },
+      ...quickButtons,
+    ),
     node("button", {
-      class: "button button--primary button--full",
+      id: "scale-apply",
+      class: "button button--primary",
       type: "submit",
-      text: buttonLabel,
+      text: "Scale",
     }),
   );
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    onSubmit();
+    actions.applyScale();
+  });
+
+  return node(
+    "section",
+    { class: "panel operation-bar" },
+    node("div", { class: "operation-line" }, form),
+    node("p", {
+      class: "op-error",
+      id: "operation-error-scale",
+      role: "alert",
+      text: error,
+    }),
+  );
+}
+
+function renderTwoRowBar(state, actions) {
+  const [first, second] = state.selection;
+  const firstLabel = `R${first + 1}`;
+  const secondLabel = `R${second + 1}`;
+
+  return node(
+    "section",
+    { class: "panel operation-bar operation-bar--two" },
+    node(
+      "p",
+      { class: "selection-summary" },
+      "Selected in order: ",
+      node("strong", { text: firstLabel }),
+      " then ",
+      node("strong", { text: secondLabel }),
+    ),
+    node(
+      "div",
+      { class: "two-row-operations" },
+      node(
+        "div",
+        { class: "swap-action" },
+        node("button", {
+          id: "swap-apply",
+          class: "button button--secondary",
+          type: "button",
+          text: `Swap ${firstLabel} <-> ${secondLabel}`,
+          onclick: actions.applySwap,
+        }),
+      ),
+      renderAddForm(
+        "first",
+        first,
+        second,
+        firstLabel,
+        secondLabel,
+        state,
+        actions,
+      ),
+      renderAddForm(
+        "second",
+        second,
+        first,
+        secondLabel,
+        firstLabel,
+        state,
+        actions,
+      ),
+    ),
+  );
+}
+
+function renderAddForm(
+  kind,
+  target,
+  source,
+  targetLabel,
+  sourceLabel,
+  state,
+  actions,
+) {
+  const errorKind = `add-${kind}`;
+  const error =
+    state.operationError?.kind === errorKind
+      ? state.operationError.message
+      : "";
+  const factor = node("input", {
+    id: `add-factor-${kind}`,
+    class: "factor-input",
+    type: "text",
+    inputmode: "text",
+    autocomplete: "off",
+    spellcheck: "false",
+    value: state.addFactors[kind],
+    placeholder: "factor",
+    "aria-label": `Factor for ${targetLabel} <- ${targetLabel} + c*${sourceLabel}`,
+  });
+  factor.addEventListener("input", () =>
+    actions.setAddFactor(kind, factor.value),
+  );
+
+  const form = node(
+    "form",
+    { class: "add-form", novalidate: true },
+    node(
+      "label",
+      {
+        class: "add-direction",
+        for: `add-factor-${kind}`,
+      },
+      node("span", {
+        class: "mono",
+        text: `${targetLabel} <- ${targetLabel} + c*${sourceLabel}`,
+      }),
+    ),
+    node(
+      "div",
+      { class: "add-controls" },
+      factor,
+      node("button", {
+        id: `add-apply-${kind}`,
+        class: "button button--primary",
+        type: "submit",
+        text: "Apply",
+      }),
+    ),
+    node("p", {
+      class: "op-error",
+      id: `operation-error-${errorKind}`,
+      role: "alert",
+      text: error,
+    }),
+  );
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    actions.applyAddMultiple(kind);
   });
 
   return form;
-}
-
-function renderSwapOperation(state, actions, size) {
-  const input = state.operationInputs.swap;
-
-  return operationForm({
-    title: "Swap rows",
-    description: "Interchange two rows.",
-    fields: [
-      field(
-        "Row i",
-        rowSelect("swap-row-i", input.i, size, (value) => {
-          input.i = value;
-        }),
-      ),
-      field(
-        "Row j",
-        rowSelect("swap-row-j", input.j, size, (value) => {
-          input.j = value;
-        }),
-      ),
-    ],
-    buttonLabel: "Swap rows",
-    error: state.operationErrors.swap,
-    onSubmit: actions.applySwap,
-  });
-}
-
-function renderScaleOperation(state, actions, size) {
-  const input = state.operationInputs.scale;
-
-  return operationForm({
-    title: "Scale a row",
-    description: "Multiply one row by a nonzero factor.",
-    fields: [
-      field(
-        "Row i",
-        rowSelect("scale-row-i", input.i, size, (value) => {
-          input.i = value;
-        }),
-      ),
-      field(
-        "Factor c",
-        factorInput("scale-factor", input.factor, "e.g. 1/2", (value) => {
-          input.factor = value;
-        }),
-      ),
-    ],
-    buttonLabel: "Scale row",
-    error: state.operationErrors.scale,
-    onSubmit: actions.applyScale,
-  });
-}
-
-function renderAddOperation(state, actions, size) {
-  const input = state.operationInputs.add;
-
-  return operationForm({
-    title: "Add a row multiple",
-    description: "Add a multiple of a source row to a target row.",
-    fields: [
-      field(
-        "Target row i",
-        rowSelect("add-target-row", input.target, size, (value) => {
-          input.target = value;
-        }),
-      ),
-      field(
-        "Source row j",
-        rowSelect("add-source-row", input.source, size, (value) => {
-          input.source = value;
-        }),
-      ),
-      field(
-        "Factor c",
-        factorInput("add-factor", input.factor, "e.g. -2", (value) => {
-          input.factor = value;
-        }),
-      ),
-    ],
-    buttonLabel: "Add multiple",
-    error: state.operationErrors.add,
-    onSubmit: actions.applyAddMultiple,
-  });
-}
-
-function renderInputNotePanel() {
-  return node(
-    "section",
-    { class: "panel input-note-panel" },
-    node("h2", { text: "Before you start" }),
-    node("p", {
-      text: "Choose n, enter the augmented matrix, and press Start. Working mode then exposes the three elementary row operations.",
-    }),
-  );
 }
 
 function renderHistoryPanel(state) {
