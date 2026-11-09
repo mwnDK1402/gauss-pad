@@ -1,5 +1,7 @@
 # Gauss Pad
 
+**Live page:** <https://mwndk1402.github.io/gauss-pad/>
+
 A manual Gaussian-elimination workbench. You enter an augmented matrix, then
 apply elementary row operations yourself, one at a time, until the coefficient
 part is the identity matrix.
@@ -7,8 +9,6 @@ part is the identity matrix.
 Gauss Pad never chooses operations, highlights pivots, auto-reduces, suggests a
 next step, or solves the system on its own. It applies exactly the operation you
 submit and reports the resulting matrix and status.
-
-Repository: <https://github.com/mwndk1402/gauss-pad/>
 
 ## Requirements
 
