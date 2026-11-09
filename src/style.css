@@ -857,6 +857,17 @@ select:focus {
   text-align: center;
 }
 
+.app-footer .repo-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.app-footer .repo-link:hover {
+  color: var(--accent-hover);
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

@@ -8,6 +8,8 @@ Gauss Pad never chooses operations, highlights pivots, auto-reduces, suggests a
 next step, or solves the system on its own. It applies exactly the operation you
 submit and reports the resulting matrix and status.
 
+Repository: <https://github.com/mwndk1402/gauss-pad/>
+
 ## Requirements
 
 - Node.js with ES modules and `node --test` support
@@ -62,10 +64,10 @@ grep -c 'script src\|link rel' dist/index.html
 # 0
 ```
 
-To check for any external references:
+To check for any external runtime references:
 
 ```sh
-grep -nE 'https?://|<link|<script[^>]+src|@import|url\(|sourceMappingURL' dist/index.html
+grep -nE '<link|<script[^>]+src|<img[^>]+src|@import|url\(|sourceMappingURL' dist/index.html
 # no output
 ```
 
@@ -77,12 +79,13 @@ the **Actions** tab.
 
 Before the first deployment, enable Pages with GitHub Actions as the source:
 
-1. Open the repository on GitHub.
+1. Open the [repository](https://github.com/mwndk1402/gauss-pad/) on GitHub.
 2. Go to **Settings** → **Pages**.
 3. Under **Build and deployment**, set **Source** to **GitHub Actions**.
 4. Push to `main`, or run the **Deploy to GitHub Pages** workflow manually.
 
-The page will be published at `https://<owner>.github.io/gauss-pad/`.
+The page is published from that repository at
+`https://mwndk1402.github.io/gauss-pad/`.
 
 ## Input rules
 

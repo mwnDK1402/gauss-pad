@@ -10,6 +10,7 @@ const DEFAULT_SIZE = 3;
 const NEGATIVE_ONE = new Fraction(-1n);
 const QUICK_FACTORS = ["-1", "1", "1/2", "1/3", "1/4", "2", "3", "-2"];
 const FLASH_DURATION = 320;
+const REPOSITORY_URL = "https://github.com/mwndk1402/gauss-pad/";
 
 function node(tagName, properties = {}, ...children) {
   const element = document.createElement(tagName);
@@ -199,7 +200,14 @@ export function mountApp(root) {
       node(
         "footer",
         { class: "app-footer" },
-        "Exact rational arithmetic. Every committed operation is applied only when you submit it.",
+        "Exact rational arithmetic. Every committed operation is applied only when you submit it. ",
+        node("a", {
+          class: "repo-link",
+          href: REPOSITORY_URL,
+          target: "_blank",
+          rel: "noreferrer noopener",
+          text: "View source on GitHub",
+        }),
       ),
     );
 
