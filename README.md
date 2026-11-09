@@ -69,6 +69,21 @@ grep -nE 'https?://|<link|<script[^>]+src|@import|url\(|sourceMappingURL' dist/i
 # no output
 ```
 
+## Deployment
+
+`.github/workflows/pages.yml` runs the tests, builds `dist/index.html`, and
+deploys it to GitHub Pages on every push to `main` or when run manually from
+the **Actions** tab.
+
+Before the first deployment, enable Pages with GitHub Actions as the source:
+
+1. Open the repository on GitHub.
+2. Go to **Settings** → **Pages**.
+3. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+4. Push to `main`, or run the **Deploy to GitHub Pages** workflow manually.
+
+The page will be published at `https://<owner>.github.io/gauss-pad/`.
+
 ## Input rules
 
 - Choose `n` from 2 to 6. The start value is 3.
